@@ -47,3 +47,7 @@ Figures 1 and 2 need only the config, so they build in minutes. Figures 3 and 4 
 ## Requirements
 
 R with `cmdstanr` (and CmdStan), `posterior`, `dplyr`, `ggplot2`. The simulation also needs Snakemake.
+
+## License
+
+The code is released under the MIT License (see `LICENSE`). `Case study/data/bloodbrain.rds` is a copy of the `BloodBrain` data from the R package `caret` and is distributed under that package's license (GPL).
