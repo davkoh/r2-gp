@@ -1,0 +1,139 @@
+# Smoke-test config: the whole pipeline end to end in a few minutes.
+#
+# Same structure as config.yaml, cut down to two conditions, two replicates and
+# short chains. Used by run_local.sh. Results from this config are for checking
+# that the plumbing works, not for drawing conclusions.
+
+seed: 20260904
+sim_reps: 2
+
+stan_file: "../Stanmodels/aHSGP_oos.stan"
+
+paths:
+  data: "data_smoke/"
+  models: "models/"
+  results: "results_smoke/"
+  summaries: "summaries_smoke/"
+  figures: "figures_smoke/"
+
+grid:
+  dimensions: [5, 10]
+  lengthscales: [0.5]
+  kernels: [se, m32]
+  max_dimension_by_kernel:
+    se: 200
+    m32: 100
+    m52: 100
+
+design:
+  n_obs: 60
+  n_test: 100
+  x_min: -1
+  x_max: 1
+  sigma: 1
+  target_r2: 0.3333
+
+basis:
+  boundary_multiplier: 4.5
+  boundary_min: 1.5
+  basis_safety: 1.2
+  size_from: truth
+  m_min: 8
+  m_max: 128
+  basis_gen_multiplier: 4
+
+models:
+  - id: r2d2_ig
+    alpha_prior: R2D2
+    rho_prior: ig
+    label: "R2D2, inverse-gamma"
+  - id: r2d2_normal
+    alpha_prior: R2D2
+    rho_prior: normal
+    normal_centre: true
+    normal_sd: 0.1
+    label: "R2D2, normal(rho, 0.1)"
+  - id: indep_ig
+    alpha_prior: Independent
+    rho_prior: ig
+    label: "Independent, inverse-gamma"
+  - id: indep_normal
+    alpha_prior: Independent
+    rho_prior: normal
+    normal_centre: true
+    normal_sd: 0.1
+    label: "Independent, normal(rho, 0.1)"
+
+reference_model: r2d2_ig
+
+priors:
+  r2_mean: 0.3333
+  r2_precision: 3
+  dirichlet_concentration: 1
+  independent_alpha_scale: 1
+  sigma_scale: 1
+  intercept_scale: 2
+  # The length-scale prior is stated as the interval it must contain, not as a
+  # shape and a scale. conditions.R::lengthscale_inv_gamma() solves for the
+  # inverse-gamma that puts `tail` of its mass below the lower limit and `tail`
+  # above the upper limit. For [0.15, 1.5] at 1% this gives IG(4.63, 1.66).
+  #
+  # The limits are properties of the design, not free choices. Inputs are
+  # scaled to [-1, 1], so the half-range is 1. A length-scale below ~0.15 the
+  # design cannot resolve; a length-scale above ~1.5 is longer than the domain
+  # and the function is then almost a straight line.
+  #
+  # To reproduce an older run instead, set lengthscale_inv_gamma: [shape, scale]
+  # here; an explicit pair wins over the interval.
+  lengthscale_containment: [0.15, 1.5]
+  lengthscale_containment_tail: 0.01
+  rho_normal_sd: 0.1
+  rho_vague_sd: 3
+  hs_df: 3
+  hs_df_global: 1
+  hs_df_slab: 4
+  hs_scale_slab: 2
+
+fit:
+  estimate_rho: true
+
+mcmc:
+  chains: 2
+  parallel_chains: 2
+  iter_warmup: 150
+  iter_sampling: 150
+  adapt_delta: 0.90
+  max_treedepth: 8
+  refresh: 0
+
+prior_predictive:
+  n_draws: 500
+  n_function_draws: 10
+  function_draw_dimension: 10
+  stan_conditions: ["D5_rho0p5_se"]
+  stan_warmup: 150
+  stan_sampling: 150
+
+# Manuscript figures 1 and 2 (rule paper_figures). Defaults reproduce
+# paper/figures/fig01_variance_gap.R and fig02_prior_predictive.R exactly; the
+# priors and spectral densities come from this file rather than being restated
+# in the figure script, so a retuned prior cannot leave the figures stale.
+paper_figures:
+  fig01_seed: 20260908
+  fig01_kernel: exp          # the introduction motivates the exact GP
+  fig01_lengthscales: [0.1, 0.5, 2]
+  fig01_n_grid: 400
+  fig01_n_show: 3
+  fig01_n_mc: 400
+  fig02_seed: 20260915
+  fig02_kernel: exp
+  fig02_lengthscale: prior   # "prior" draws rho from the IG; or fix a number
+  fig02_priors: [R2D2, Independent, Horseshoe, Normal-gamma]
+  fig02_dimensions: [1, 5, 30]
+  fig02_n_draws: 300
+  fig02_n_obs: 200
+  fig02_n_basis: 50
+  fig02_boundary: 1.5
+
+resources:
+  fit_threads: 2

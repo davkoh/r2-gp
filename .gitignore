@@ -1,0 +1,49 @@
+# ---------------------------------------------------------------------------
+# This repository holds source and raw data only. Everything a run produces is
+# ignored: fitted model objects, compiled Stan binaries, figures, summaries and
+# LaTeX build artifacts. Re-run the pipeline or the case-study scripts to
+# rebuild them.
+# ---------------------------------------------------------------------------
+
+# Compiled Stan binaries. cmdstan writes them next to the .stan source with no
+# extension, so ignore everything under Stanmodels/ except the sources.
+Stanmodels/**
+!Stanmodels/**/
+!Stanmodels/**/*.stan
+
+# Simulation pipeline outputs (sim/README.md explains the layout).
+sim/.snakemake/
+sim/data/
+sim/data_smoke/
+sim/data_calib/
+sim/results/
+sim/results_smoke/
+sim/results_calib/
+sim/summaries/
+sim/summaries_smoke/
+sim/summaries_calib/
+sim/figures/
+sim/figures_smoke/
+sim/figures_calib/
+sim/models/
+sim/env/
+
+# Rendered README (Quarto output and its vendored libraries).
+sim/README.html
+sim/README_files/
+
+# Case-study outputs: per-split fits, effect curves, figures and tables, plus
+# the Stan binary each run compiles. These are large and fully regenerable.
+Case study/vardecomp_casestudy/
+
+# Slurm logs
+*.err
+*.out
+snakemake_slurm-*
+
+# R / RStudio / macOS
+.Rhistory
+.RData
+.Rproj.user/
+.Ruserdata
+.DS_Store

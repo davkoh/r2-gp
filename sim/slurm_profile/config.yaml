@@ -1,0 +1,104 @@
+# Slurm profile for the additive-HSGP simulation.
+#
+# Use:  snakemake <targets> --profile slurm_profile/
+#
+# This is the only file that differs between a local run and a cluster run.
+# The Snakefile contains no Slurm-specific logic.
+#
+# Snakemake 8 style: `executor: slurm` with snakemake-executor-plugin-slurm.
+#
+# -----------------------------------------------------------------------------
+# HOW A GROUP BECOMES ONE SLURM JOB -- read this before you change a number.
+# -----------------------------------------------------------------------------
+# `group-components: fit_model: 20` does NOT submit 20 Slurm jobs. It submits
+# ONE Slurm job that runs 20 fits. Slurm therefore sees 90 submissions for the
+# 1800 fits, not 1800. That is the point: short jobs annoy schedulers.
+#
+# Snakemake computes the allocation for a group job like this
+# (snakemake/resources.py, GroupResources.basic_layered):
+#
+#   * It packs the group's jobs into LAYERS. A layer must fit inside the
+#     `_cores` constraint, which is the driver's `--cores` value.
+#   * Width (cpus, mem_mb) is SUMMED inside a layer, then MAXED across layers.
+#   * runtime is ADDITIVE: each layer contributes its longest job, and the
+#     layer runtimes are SUMMED.
+#
+# The fits are independent, so the only thing that serialises them is `--cores`.
+# run_snakemake.sh passes `--cores 4`, and set-threads gives fit_model 4 cpus.
+# One fit therefore fills a layer, and the 20 fits run one after another:
+#
+#     cpus     = 4                     (one fit at a time)
+#     mem_mb   = 8000                  (one fit at a time)
+#     runtime  = 20 x 30 min = 10 h    (SUMMED, not maxed)
+#
+# THE RUNTIME MULTIPLIES. A per-fit runtime of 8h with 20 components would ask
+# Slurm for 160 hours and be rejected. Keep
+#
+#     group-components x per-job runtime  <  the partition time limit.
+#
+# Raising `--cores` instead runs fits in parallel inside one allocation, which
+# multiplies cpus and mem rather than runtime: 20 fits x 4 threads = 80 cpus
+# and 160 GB. That is a much harder allocation to schedule.
+#
+# CALIBRATE `runtime` BEFORE THE FULL RUN. summaries/parameter_recovery.csv has
+# a `seconds` column (median sampling time per fit). Take the slowest cell,
+# double it, and use that. 30 min below is an estimate, not a measurement.
+# -----------------------------------------------------------------------------
+
+executor: slurm
+jobs: 500
+
+default-resources:
+  slurm_partition: batch
+
+set-threads:
+  compile_model: 1
+  generate_data: 1
+  fit_model: 4          # matches mcmc.parallel_chains, so all chains run at once
+  aggregate_results: 1
+  plot_results: 1
+  make_table: 1
+  paper_figures: 2
+  prior_predictive: 2
+  basis_adequacy: 1
+
+# mem_mb (an integer), not mem ("8GB"). A string resource is NOT aggregated
+# across a group: Snakemake takes the first job's value and moves on. An
+# integer is summed inside a layer, which is what a group job needs.
+set-resources:
+  compile_model:
+    mem_mb: 10000
+    runtime: 20
+  generate_data:
+    mem_mb: 4000
+    runtime: 2
+  fit_model:
+    mem_mb: 8000
+    runtime: 30        # per fit; x group-components = the Slurm walltime
+  aggregate_results:
+    mem_mb: 16000
+    runtime: 30
+  plot_results:
+    mem_mb: 8000
+    runtime: 30
+  make_table:
+    mem_mb: 8000
+    runtime: 20
+  paper_figures:
+    mem_mb: 8000
+    runtime: 60
+  prior_predictive:
+    mem_mb: 8000
+    runtime: 60
+  basis_adequacy:
+    mem_mb: 4000
+    runtime: 15
+
+group-components:
+  # 20 x 30 min = a 10 h Slurm job, 90 submissions for 1800 fits.
+  # Lower this number if the queue rejects long jobs; raise it if the admins
+  # complain about job count. Do not raise it without lowering `runtime`.
+  fit_model: 20
+  # 45 conditions, 1 cpu each, so 4 fit in a layer under --cores 4:
+  # ceil(45/4) = 12 layers x 2 min = a 24 min job.
+  generate_data: 45

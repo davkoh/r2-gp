@@ -1,0 +1,168 @@
+# Simulation conditions and model settings.
+#
+# Every R script reads this same file: the Snakefile passes its path through
+# params.config_file, so the DAG and the scripts can never disagree about which
+# config is in force.
+
+seed: 1994
+sim_reps: 10
+
+stan_file: "../Stanmodels/aHSGP_oos.stan"
+
+paths:
+  data: "data/"
+  models: "models/"
+  results: "results/"
+  summaries: "summaries/"
+  figures: "figures/"
+
+# The simulation grid. Conditions are the full crossing of these three lists, minus the
+# cells excluded by max_dimension_by_kernel.
+grid:
+  dimensions: [5, 10, 30, 50, 100]
+  lengthscales: [0.3, 0.5, 0.7]
+  kernels: [se, m32, m52]
+  # The Materns need about twice the basis functions of the squared
+  # exponential, so D * M is largest exactly at D = 200 for them. That corner
+  # is dropped rather than paid for.
+  max_dimension_by_kernel:
+    se: 100
+    m32: 100
+    m52: 100
+
+design:
+  n_obs: 120
+  n_test: 500
+  # The raw draw range. scale_inputs() maps each column to [-1, 1] regardless,
+  # so changing this exercises the transform rather than changing the model.
+  x_min: -1
+  x_max: 1
+  sigma: 1
+  target_r2: 0.3333
+
+# Boundary and basis count, from Riutort-Mayol et al. (2023). With the inputs
+# scaled to [-1, 1] the half-range is 1, so L = c and both rules are uniform
+# across the grid. Set `boundary:` or `n_basis:` here to pin them instead.
+basis:
+  boundary_multiplier: 4.5   # c >= 4.5 * rho
+  boundary_min: 1.5
+  basis_safety: 1.2          # M = ceil(safety * const * c / rho)
+  # Which length-scale sizes L and M. "truth" uses the generating length-scale;
+  # "prior" uses the 5th-95th percentile range of the length-scale priors, which
+  # is conservative but much more expensive. basis_adequacy.csv reports the
+  # approximation error across the prior either way, so the cost of "truth" is
+  # measured rather than assumed.
+  size_from: truth
+  m_min: 8
+  m_max: 128
+  # The data-generating basis is finer than the fitting basis, so the truth is
+  # effectively an exact GP under the same normalisation and a fit with too few
+  # basis functions is detectable rather than correct by construction.
+  basis_gen_multiplier: 4
+
+# Models: one (alpha prior, rho prior) pair each.
+#   alpha_prior: R2D2 | Independent | RHS | NG
+#   rho_prior:   ig | normal | vague
+# normal_centre: true puts the normal prior's mean at the generating
+# length-scale, making it a well-specified informative prior.
+models:
+  - id: r2d2_ig
+    alpha_prior: R2D2
+    rho_prior: ig
+    label: "R2D2, inverse-gamma"
+  - id: r2d2_normal
+    alpha_prior: R2D2
+    rho_prior: normal
+    normal_centre: true
+    normal_sd: 0.1
+    label: "R2D2, normal(rho, 0.1)"
+  - id: indep_ig
+    alpha_prior: Independent
+    rho_prior: ig
+    label: "Independent, inverse-gamma"
+  - id: indep_normal
+    alpha_prior: Independent
+    rho_prior: normal
+    normal_centre: true
+    normal_sd: 0.1
+    label: "Independent, normal(rho, 0.1)"
+
+# ELPD differences are formed against this benchmark, as
+# (benchmark - competitor) summed over test points. A POSITIVE difference
+# therefore favours the benchmark; a negative one favours the competitor.
+reference_model: r2d2_ig
+
+priors:
+  r2_mean: 0.3333
+  r2_precision: 3            # with r2_mean = 1/3 this is Beta(1, 2)
+  dirichlet_concentration: 1
+  independent_alpha_scale: 1
+  sigma_scale: 1
+  intercept_scale: 2
+  # The length-scale prior is stated as the interval it must contain, not as a
+  # shape and a scale. conditions.R::lengthscale_inv_gamma() solves for the
+  # inverse-gamma that puts `tail` of its mass below the lower limit and `tail`
+  # above the upper limit. For [0.15, 1.5] at 1% this gives IG(4.63, 1.66).
+  #
+  # The limits are properties of the design, not free choices. Inputs are
+  # scaled to [-1, 1], so the half-range is 1. A length-scale below ~0.15 the
+  # design cannot resolve; a length-scale above ~1.5 is longer than the domain
+  # and the function is then almost a straight line.
+  #
+  # To reproduce an older run instead, set lengthscale_inv_gamma: [shape, scale]
+  # here; an explicit pair wins over the interval.
+  lengthscale_containment: [0.15, 1.5]
+  lengthscale_containment_tail: 0.01
+  rho_normal_sd: 0.1
+  rho_vague_sd: 3
+  # Regularized horseshoe, used only if an RHS model is enabled.
+  hs_df: 3
+  hs_df_global: 1
+  hs_df_slab: 4
+  hs_scale_slab: 2
+
+fit:
+  estimate_rho: true
+
+mcmc:
+  chains: 4
+  parallel_chains: 4
+  iter_warmup: 1000
+  iter_sampling: 1000
+  adapt_delta: 0.95
+  max_treedepth: 10
+  refresh: 0
+
+prior_predictive:
+  n_draws: 2000
+  n_function_draws: 15
+  function_draw_dimension: 10
+  # Stan prior_only runs validate the R-side normalisation. A subset is enough;
+  # this is an implementation check, not a sweep.
+  stan_conditions: ["D5_rho0p5_se", "D100_rho0p5_se"]
+  stan_warmup: 500
+  stan_sampling: 500
+
+# Manuscript figures 1 and 2 (rule paper_figures). Defaults reproduce
+# paper/figures/fig01_variance_gap.R and fig02_prior_predictive.R exactly; the
+# priors and spectral densities come from this file rather than being restated
+# in the figure script, so a retuned prior cannot leave the figures stale.
+paper_figures:
+  fig01_seed: 20260908
+  fig01_kernel: exp          # the introduction motivates the exact GP
+  fig01_lengthscales: [0.1, 0.5, 2]
+  fig01_n_grid: 400
+  fig01_n_show: 3
+  fig01_n_mc: 4000
+  fig02_seed: 20260915
+  fig02_kernel: exp
+  fig02_lengthscale: prior   # "prior" draws rho from the IG; or fix a number
+  fig02_priors: [R2D2, Independent, Horseshoe, Normal-gamma]
+  fig02_dimensions: [1, 2, 5, 10, 30, 100]
+  fig02_n_draws: 2000
+  fig02_n_obs: 200
+  fig02_n_basis: 100
+  fig02_boundary: 1.5
+
+resources:
+  fit_threads: 4

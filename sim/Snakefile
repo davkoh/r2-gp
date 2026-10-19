@@ -1,0 +1,269 @@
+# Simulation pipeline for additive-HSGP variance priors.
+#
+# Run locally:    snakemake --cores 8 all prior_all
+# Run on Slurm:   snakemake --profile slurm_profile/ all prior_all
+#
+# Local versus cluster execution differs only by the presence of --profile.
+# Resources and job grouping live in slurm_profile/config.yaml.
+#
+# A condition is one cell of the grid (D, length-scale, kernel); a model is one
+# (alpha prior, rho prior) pair. Conditions are expanded here from three config
+# lists rather than written out by hand, because the grid is a clean product.
+# R mirrors this expansion in R/conditions.R::build_conditions(); the two must
+# agree on condition_id, which is the only thing they exchange.
+
+import itertools
+import os
+
+configfile: "config.yaml"
+
+
+# The config file the DAG was built from, passed to every R script so that R
+# cannot end up reading a different file than the one that defined the DAG.
+CONFIG_FILE = os.path.abspath(workflow.configfiles[0])
+
+PATHS = config["paths"]
+REPS = list(range(1, int(config["sim_reps"]) + 1))
+MODEL_IDS = [model["id"] for model in config["models"]]
+
+
+def num_token(value):
+    """Format a config number for a path: 0.5 -> 0p5, -2 -> m2."""
+    text = f"{value:g}" if isinstance(value, (int, float)) else str(value)
+    return text.replace(".", "p").replace("-", "m")
+
+
+def condition_id(dimension, rho, kernel):
+    return f"D{num_token(dimension)}_rho{num_token(rho)}_{kernel}"
+
+
+def build_conditions():
+    """Expand the grid, dropping the cells excluded per kernel.
+
+    The Materns need roughly twice the basis functions of the squared
+    exponential, so D * M grows fastest there.
+    """
+    grid = config["grid"]
+    caps = grid.get("max_dimension_by_kernel", {})
+    conditions = []
+    for kernel, rho, dimension in itertools.product(
+        grid["kernels"], grid["lengthscales"], grid["dimensions"]
+    ):
+        if dimension > caps.get(kernel, float("inf")):
+            continue
+        conditions.append(condition_id(dimension, rho, kernel))
+    return conditions
+
+
+CONDITION_IDS = build_conditions()
+
+# Tags are single path components.
+wildcard_constraints:
+    condition_id=r"[^/]+",
+    model_id=r"[^/]+",
+    rep=r"\d+",
+
+
+def datasets_for(condition):
+    return [f"{PATHS['data']}{condition}/rep_{rep}.rds" for rep in REPS]
+
+
+ALL_DATASETS = [f for c in CONDITION_IDS for f in datasets_for(c)]
+ALL_RESULTS = [
+    f"{PATHS['results']}{c}/{model}/rep_{rep}.rds"
+    for c in CONDITION_IDS
+    for model in MODEL_IDS
+    for rep in REPS
+]
+COMPILE_STAMP = PATHS["models"] + "aHSGP/compile.rds"
+
+SUMMARY_FILES = {
+    "metrics": PATHS["summaries"] + "metrics.csv",
+    "diagnostics": PATHS["summaries"] + "diagnostics.csv",
+    "parameter_rmse": PATHS["summaries"] + "parameter_rmse.csv",
+    "elpd": PATHS["summaries"] + "elpd.csv",
+    "rds": PATHS["summaries"] + "results.rds",
+}
+
+# The two manuscript result figures. Parameter recovery and sampling
+# statistics are a LaTeX table (make_table), not figures.
+FIGURES = [
+    PATHS["figures"] + name
+    for name in ("elpd_difference.pdf", "posterior_r2.pdf")
+]
+
+# Manuscript figures 1 and 2, which depend only on the config, not on fits.
+PAPER_FIGURES = [
+    PATHS["figures"] + name
+    for name in ("fig01_variance_gap.pdf", "fig02_prior_predictive.pdf")
+]
+
+TABLE = PATHS["summaries"] + "parameter_recovery.tex"
+
+
+rule all:
+    input:
+        FIGURES,
+        TABLE,
+
+
+rule compile_all:
+    input:
+        COMPILE_STAMP,
+
+
+rule generate_all:
+    input:
+        ALL_DATASETS,
+
+
+rule fit_all:
+    input:
+        ALL_RESULTS,
+
+
+rule prior_all:
+    input:
+        PAPER_FIGURES,
+        PATHS["summaries"] + "prior_r2_stan.csv",
+        PATHS["figures"] + "basis_adequacy.png",
+
+
+rule compile_model:
+    """Compile once. The kernel is a data switch, so there is one binary."""
+    input:
+        stan_file=config["stan_file"],
+    output:
+        stamp=COMPILE_STAMP,
+    group:
+        "compile_model"
+    script:
+        "R/compile_model.R"
+
+
+rule generate_data:
+    output:
+        datasets=expand(PATHS["data"] + "{{condition_id}}/rep_{rep}.rds", rep=REPS),
+    params:
+        config_file=CONFIG_FILE,
+        condition_id=lambda w: w.condition_id,
+    group:
+        "generate_data"
+    script:
+        "R/generate_data.R"
+
+
+rule fit_model:
+    """One fit per (condition, model, replicate).
+
+    Deliberately not batched in the Snakefile: the Slurm profile bundles these
+    into shared allocations via group-components, which keeps the scheduler
+    happy without any batching machinery here.
+
+    stan_file is an input purely so that editing the model re-triggers fits.
+    """
+    input:
+        dataset=PATHS["data"] + "{condition_id}/rep_{rep}.rds",
+        compile_stamp=COMPILE_STAMP,
+        stan_file=config["stan_file"],
+    output:
+        result=PATHS["results"] + "{condition_id}/{model_id}/rep_{rep}.rds",
+    params:
+        config_file=CONFIG_FILE,
+        condition_id=lambda w: w.condition_id,
+        model_id=lambda w: w.model_id,
+        replication=lambda w: int(w.rep),
+    threads: config["resources"]["fit_threads"]
+    group:
+        "fit_model"
+    script:
+        "R/fit_model.R"
+
+
+rule aggregate_results:
+    input:
+        results=ALL_RESULTS,
+    output:
+        **SUMMARY_FILES,
+    params:
+        config_file=CONFIG_FILE,
+    script:
+        "R/aggregate_results.R"
+
+
+rule plot_results:
+    """The two manuscript result figures, in paper/figures/ style."""
+    input:
+        rds=SUMMARY_FILES["rds"],
+    output:
+        FIGURES,
+        csv=PATHS["figures"] + "elpd_difference.csv",
+    params:
+        config_file=CONFIG_FILE,
+        figure_dir=PATHS["figures"],
+    script:
+        "R/plot_results.R"
+
+
+rule make_table:
+    """Parameter recovery and sampling statistics as a publication LaTeX table.
+
+    Replaces the per-parameter RMSE figures: the same information reads better
+    as numbers, and the sampling diagnostics belong beside it.
+    """
+    input:
+        rds=SUMMARY_FILES["rds"],
+    output:
+        tex=TABLE,
+        csv=PATHS["summaries"] + "parameter_recovery.csv",
+    params:
+        config_file=CONFIG_FILE,
+    script:
+        "R/make_table.R"
+
+
+rule paper_figures:
+    """Manuscript figures 1 and 2. Config-driven only; no fits required."""
+    output:
+        fig01=PATHS["figures"] + "fig01_variance_gap.pdf",
+        fig01_csv=PATHS["summaries"] + "fig01_variance_gap.csv",
+        fig02=PATHS["figures"] + "fig02_prior_predictive.pdf",
+        fig02_csv=PATHS["summaries"] + "fig02_prior_predictive_quantiles.csv",
+    params:
+        config_file=CONFIG_FILE,
+    script:
+        "R/paper_figures.R"
+
+
+rule prior_predictive:
+    """Stan prior_only cross-check of the variance normalisation.
+
+    Figure 2 is the presentational prior-predictive output (rule
+    paper_figures); this rule exists to confirm that Stan's implied_R2 agrees
+    with the R-side computation, i.e. that the normalisation derived in
+    ../R2D2_HSGP_NORMALIZATION.md is implemented consistently on both sides.
+    """
+    input:
+        stan_file=config["stan_file"],
+        compile_stamp=COMPILE_STAMP,
+    output:
+        stan_csv=PATHS["summaries"] + "prior_r2_stan.csv",
+    params:
+        config_file=CONFIG_FILE,
+    script:
+        "R/prior_predictive.R"
+
+
+rule basis_adequacy:
+    """Cheap pre-flight check on the boundary and basis count.
+
+    Run this before a long cluster run: it costs seconds, and an undersized
+    boundary discovered after the fits costs days.
+    """
+    output:
+        csv=PATHS["summaries"] + "basis_adequacy.csv",
+        figure=PATHS["figures"] + "basis_adequacy.png",
+    params:
+        config_file=CONFIG_FILE,
+    script:
+        "R/basis_adequacy.R"
