@@ -1,9 +1,6 @@
 # R2-GP: Variance-Calibrated Priors for Additive Gaussian Processes
 
-Priors on component variances for additive Hilbert-space approximate Gaussian
-processes (HSGPs). The repo compares the **R2-GP** prior with the regularised
-horseshoe (RHS), normal-gamma (NG) and half-normal (Normal) priors on the
-component scales α_d. It includes a simulation study and a real-data case study.
+Priors on component variances for additive Hilbert-space approximate Gaussian processes (HSGPs). The repo compares the **R2-GP** prior with the regularised horseshoe (RHS), normal-gamma (NG) and half-normal (Normal) priors on the component scales α_d. It includes a simulation study and a real-data case study.
 
 ## Structure
 
@@ -45,13 +42,8 @@ Nothing in this repository is a stored result: all outputs are regenerated.
 | Parameter recovery table | same rule | `sim/summaries/parameter_recovery.tex` |
 | Case-study table and figures | `Rscript "Case study/final_outputs.R"` | `Case study/vardecomp_casestudy/final/` |
 
-Figures 1 and 2 need only the config, so they build in minutes. Figures 3 and 4
-and the table need the full simulation grid. Read `sim/README.md` first: it
-sets out a four-step order for the first cluster run, and the resource settings
-in `sim/slurm_profile/config.yaml` are estimates that should be measured with
-`sim/run_calibrate.sh` before the full grid is launched.
+Figures 1 and 2 need only the config, so they build in minutes. Figures 3 and 4 and the table need the full simulation grid. Read `sim/README.md` first: it sets out a four-step order for the first cluster run, and the resource settings in  sim/slurm_profile/config.yaml` are estimates that should be measured with `sim/run_calibrate.sh` before the full grid is launched.
 
 ## Requirements
 
-R with `cmdstanr` (and CmdStan), `posterior`, `dplyr`, `ggplot2`. The
-simulation also needs Snakemake.
+R with `cmdstanr` (and CmdStan), `posterior`, `dplyr`, `ggplot2`. The simulation also needs Snakemake.
